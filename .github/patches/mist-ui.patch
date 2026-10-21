@@ -26,7 +26,7 @@ index eead823..3c8b832 100644
  
      /** Give a good name to this, IDK*/
 diff --git a/V2rayNG/app/src/main/java/com/v2ray/ang/core/CoreOutboundBuilder.kt b/V2rayNG/app/src/main/java/com/v2ray/ang/core/CoreOutboundBuilder.kt
-index fb135e5..00d81b7 100644
+index fb135e5..dd0c9de 100644
 --- a/V2rayNG/app/src/main/java/com/v2ray/ang/core/CoreOutboundBuilder.kt
 +++ b/V2rayNG/app/src/main/java/com/v2ray/ang/core/CoreOutboundBuilder.kt
 @@ -32,6 +32,7 @@ object CoreOutboundBuilder {
@@ -53,7 +53,7 @@ index fb135e5..00d81b7 100644
              EConfigType.TROJAN -> OutboundBean(
                  protocol = configType.name.lowercase(),
                  settings = OutboundBean.OutSettingsBean(),
-@@ -312,6 +315,33 @@ object CoreOutboundBuilder {
+@@ -312,6 +315,34 @@ object CoreOutboundBuilder {
          return outboundBean
      }
  
@@ -78,7 +78,8 @@ index fb135e5..00d81b7 100644
 +
 +        outboundBean?.streamSettings?.let {
 +            it.network = NetworkType.TCP.type
-+            populateTlsSettings(it, profileItem, profileItem.sni.ifEmpty { profileItem.server })
++            val sniExt = profileItem.sni.takeIf { s -> !s.isNullOrEmpty() } ?: profileItem.server
++            populateTlsSettings(it, profileItem, sniExt)
 +        }
 +
 +        return outboundBean
@@ -87,7 +88,7 @@ index fb135e5..00d81b7 100644
      private fun createTcpHttpRequest(
          host: String?,
          path: String?
-@@ -472,6 +502,15 @@ object CoreOutboundBuilder {
+@@ -472,6 +503,15 @@ object CoreOutboundBuilder {
                  streamSettings.grpcSettings = grpcSetting
              }
  
