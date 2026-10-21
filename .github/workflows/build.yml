@@ -12,7 +12,7 @@ jobs:
       run: |
         git clone --depth 1 https://github.com/2dust/v2rayNG.git src
         cd src
-        git submodule update --init hev-socks5-tunnel
+        git submodule update --init --recursive hev-socks5-tunnel
 
     - name: Apply Mist patches
       run: |
