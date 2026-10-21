@@ -8,6 +8,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - name: Checkout Mist repo (for patches)
+      uses: actions/checkout@v4
+      with:
+        sparse-checkout: .github/patches
+        sparse-checkout-cone-mode: false
+
     - name: Clone v2rayNG upstream
       run: |
         git clone --depth 1 https://github.com/2dust/v2rayNG.git src
