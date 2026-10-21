@@ -1,0 +1,665 @@
+diff --git a/V2rayNG/app/src/main/AndroidManifest.xml b/V2rayNG/app/src/main/AndroidManifest.xml
+index 7b2a0d6..8889dd3 100644
+--- a/V2rayNG/app/src/main/AndroidManifest.xml
++++ b/V2rayNG/app/src/main/AndroidManifest.xml
+@@ -111,6 +111,10 @@
+             android:name=".ui.server.ServerHysteria2Activity"
+             android:exported="false"
+             android:windowSoftInputMode="stateUnchanged|adjustResize" />
++        <activity
++            android:name=".ui.server.ServerMistActivity"
++            android:exported="false"
++            android:windowSoftInputMode="stateUnchanged|adjustResize" />
+         <activity
+             android:name=".ui.server.ServerCustomConfigActivity"
+             android:exported="false"
+diff --git a/V2rayNG/app/src/main/java/com/v2ray/ang/AppConfig.kt b/V2rayNG/app/src/main/java/com/v2ray/ang/AppConfig.kt
+index eead823..3c8b832 100644
+--- a/V2rayNG/app/src/main/java/com/v2ray/ang/AppConfig.kt
++++ b/V2rayNG/app/src/main/java/com/v2ray/ang/AppConfig.kt
+@@ -218,6 +218,7 @@ object AppConfig {
+     const val HYSTERIA = "hysteria://"
+     const val HYSTERIA2 = "hysteria2://"
+     const val HY2 = "hy2://"
++    const val MIST = "mist://"
+     const val V2RAYNFMTS = "v2rayn://"
+ 
+     /** Give a good name to this, IDK*/
+diff --git a/V2rayNG/app/src/main/java/com/v2ray/ang/core/CoreOutboundBuilder.kt b/V2rayNG/app/src/main/java/com/v2ray/ang/core/CoreOutboundBuilder.kt
+index fb135e5..00d81b7 100644
+--- a/V2rayNG/app/src/main/java/com/v2ray/ang/core/CoreOutboundBuilder.kt
++++ b/V2rayNG/app/src/main/java/com/v2ray/ang/core/CoreOutboundBuilder.kt
+@@ -32,6 +32,7 @@ object CoreOutboundBuilder {
+             EConfigType.WIREGUARD -> toOutboundWireguard(profileItem)
+             EConfigType.HYSTERIA2 -> toOutboundHysteria2(profileItem)
+             EConfigType.HTTP -> toOutboundHttp(profileItem)
++            EConfigType.MIST -> toOutboundMist(profileItem)
+             else -> null
+         }
+ 
+@@ -53,6 +54,7 @@ object CoreOutboundBuilder {
+                 || protocol.equals(EConfigType.WIREGUARD.name, true)
+                 || protocol.equals(EConfigType.HYSTERIA2.name, true)
+                 || protocol.equals(EConfigType.HYSTERIA.name, true)
++                || protocol.equals(EConfigType.MIST.name, true)
+             ) {
+                 muxEnabled = false
+             } else if (outbound.streamSettings?.network == NetworkType.XHTTP.type) {
+@@ -87,6 +89,7 @@ object CoreOutboundBuilder {
+             EConfigType.SHADOWSOCKS,
+             EConfigType.SOCKS,
+             EConfigType.HTTP,
++            EConfigType.MIST,
+             EConfigType.TROJAN -> OutboundBean(
+                 protocol = configType.name.lowercase(),
+                 settings = OutboundBean.OutSettingsBean(),
+@@ -312,6 +315,33 @@ object CoreOutboundBuilder {
+         return outboundBean
+     }
+ 
++    private fun toOutboundMist(profileItem: ProfileItem): OutboundBean? {
++        val outboundBean = createInitOutbound(EConfigType.MIST)
++
++        outboundBean?.settings?.let { settings ->
++            settings.address = getServerAddress(profileItem)
++            settings.port = profileItem.serverPort.orEmpty().toInt()
++            settings.clientId = profileItem.mistClientId.orEmpty()
++            settings.authKey = profileItem.mistAuthKey.orEmpty()
++        }
++
++        // Mist is always TLS over TCP; force stream security settings accordingly
++        profileItem.security = AppConfig.TLS
++        if (profileItem.fingerPrint.isNullOrEmpty()) {
++            profileItem.fingerPrint = "chrome"
++        }
++        if (profileItem.alpn.isNullOrEmpty()) {
++            profileItem.alpn = "h2,http/1.1"
++        }
++
++        outboundBean?.streamSettings?.let {
++            it.network = NetworkType.TCP.type
++            populateTlsSettings(it, profileItem, profileItem.sni.ifEmpty { profileItem.server })
++        }
++
++        return outboundBean
++    }
++
+     private fun createTcpHttpRequest(
+         host: String?,
+         path: String?
+@@ -472,6 +502,15 @@ object CoreOutboundBuilder {
+                 streamSettings.grpcSettings = grpcSetting
+             }
+ 
++            NetworkType.MIST.type -> {
++                val mistSetting = OutboundBean.StreamSettingsBean.MistSettingsBean(
++                    clientId = profileItem.mistClientId.orEmpty(),
++                    authKey = profileItem.mistAuthKey.orEmpty()
++                )
++                streamSettings.mistSettings = mistSetting
++                sni = host
++            }
++
+             NetworkType.HYSTERIA.type -> {
+                 val hysteriaSetting = OutboundBean.StreamSettingsBean.HysteriaSettingsBean(
+                     version = 2,
+diff --git a/V2rayNG/app/src/main/java/com/v2ray/ang/dto/V2rayConfig.kt b/V2rayNG/app/src/main/java/com/v2ray/ang/dto/V2rayConfig.kt
+index e3f49d8..f7839f5 100644
+--- a/V2rayNG/app/src/main/java/com/v2ray/ang/dto/V2rayConfig.kt
++++ b/V2rayNG/app/src/main/java/com/v2ray/ang/dto/V2rayConfig.kt
+@@ -94,6 +94,9 @@ data class V2rayConfig(
+             var method: String? = null,
+             /*Hysteria/Hysteria2*/
+             var version: Int? = null,
++            /*Mist*/
++            var clientId: String? = null,
++            var authKey: String? = null,
+             /*Wireguard*/
+             var secretKey: String? = null,
+             val peers: List<WireGuardBean>? = null,
+@@ -122,6 +125,7 @@ data class V2rayConfig(
+             var realitySettings: TlsSettingsBean? = null,
+             var grpcSettings: GrpcSettingsBean? = null,
+             var hysteriaSettings: HysteriaSettingsBean? = null,
++            var mistSettings: MistSettingsBean? = null,
+             var finalmask: Any? = null,
+             val dsSettings: Any? = null,
+             var sockopt: SockoptBean? = null
+@@ -253,6 +257,11 @@ data class V2rayConfig(
+                 var auth: String? = null
+             )
+ 
++            data class MistSettingsBean(
++                var clientId: String? = null,
++                var authKey: String? = null
++            )
++
+             //https://xtls.github.io/config/transport.html#finalmaskobject
+             data class FinalMaskBean(
+                 var tcp: List<MaskBean>? = null,
+diff --git a/V2rayNG/app/src/main/java/com/v2ray/ang/dto/entities/ProfileItem.kt b/V2rayNG/app/src/main/java/com/v2ray/ang/dto/entities/ProfileItem.kt
+index 7eb270c..13f03c8 100644
+--- a/V2rayNG/app/src/main/java/com/v2ray/ang/dto/entities/ProfileItem.kt
++++ b/V2rayNG/app/src/main/java/com/v2ray/ang/dto/entities/ProfileItem.kt
+@@ -61,6 +61,8 @@ data class ProfileItem(
+     var obfsPassword: String? = null,
+     var portHopping: String? = null,
+     var portHoppingInterval: String? = null,
++    var mistClientId: String? = null,
++    var mistAuthKey: String? = null,
+     @Deprecated("Use pinnedCA256")
+     var pinSHA256: String? = null,
+     var bandwidthDown: String? = null,
+diff --git a/V2rayNG/app/src/main/java/com/v2ray/ang/enums/EConfigType.kt b/V2rayNG/app/src/main/java/com/v2ray/ang/enums/EConfigType.kt
+index c390f8d..a181072 100644
+--- a/V2rayNG/app/src/main/java/com/v2ray/ang/enums/EConfigType.kt
++++ b/V2rayNG/app/src/main/java/com/v2ray/ang/enums/EConfigType.kt
+@@ -15,6 +15,7 @@ enum class EConfigType(val value: Int, val protocolScheme: String) {
+     HYSTERIA2(9, AppConfig.HYSTERIA2),
+     HYSTERIA(900, AppConfig.HYSTERIA),
+     HTTP(10, AppConfig.HTTP),
++    MIST(11, AppConfig.MIST),
+     POLICYGROUP(101, AppConfig.CUSTOM),
+     PROXYCHAIN(102, AppConfig.CUSTOM);
+ 
+diff --git a/V2rayNG/app/src/main/java/com/v2ray/ang/enums/NetworkType.kt b/V2rayNG/app/src/main/java/com/v2ray/ang/enums/NetworkType.kt
+index 3574be5..4b42cc4 100644
+--- a/V2rayNG/app/src/main/java/com/v2ray/ang/enums/NetworkType.kt
++++ b/V2rayNG/app/src/main/java/com/v2ray/ang/enums/NetworkType.kt
+@@ -11,7 +11,8 @@ enum class NetworkType(val type: String) {
+ 
+     //QUIC("quic"),
+     GRPC("grpc"),
+-    HYSTERIA("hysteria");
++    HYSTERIA("hysteria"),
++    MIST("mist");
+ 
+     companion object {
+         fun fromString(type: String?) = entries.find { it.type == type } ?: TCP
+diff --git a/V2rayNG/app/src/main/java/com/v2ray/ang/handler/AngConfigManager.kt b/V2rayNG/app/src/main/java/com/v2ray/ang/handler/AngConfigManager.kt
+index e790e59..30d0141 100644
+--- a/V2rayNG/app/src/main/java/com/v2ray/ang/handler/AngConfigManager.kt
++++ b/V2rayNG/app/src/main/java/com/v2ray/ang/handler/AngConfigManager.kt
+@@ -163,6 +163,7 @@ object AngConfigManager {
+                 EConfigType.TROJAN -> TrojanFmt.toUri(config)
+                 EConfigType.WIREGUARD -> WireguardFmt.toUri(config)
+                 EConfigType.HYSTERIA2 -> Hysteria2Fmt.toUri(config)
++                EConfigType.MIST -> ""
+                 else -> {}
+             }
+         } catch (e: Exception) {
+diff --git a/V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainActivity.kt b/V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainActivity.kt
+index 8c0510e..5b9f3bc 100644
+--- a/V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainActivity.kt
++++ b/V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainActivity.kt
+@@ -36,6 +36,7 @@ import com.v2ray.ang.ui.server.ServerCustomConfigActivity
+ import com.v2ray.ang.ui.server.ServerGroupActivity
+ import com.v2ray.ang.ui.server.ServerHttpActivity
+ import com.v2ray.ang.ui.server.ServerHysteria2Activity
++import com.v2ray.ang.ui.server.ServerMistActivity
+ import com.v2ray.ang.ui.server.ServerProxyChainActivity
+ import com.v2ray.ang.ui.server.ServerShadowsocksActivity
+ import com.v2ray.ang.ui.server.ServerSocksActivity
+@@ -205,6 +206,7 @@ class MainActivity : HelperBaseComponentActivity() {
+             EConfigType.TROJAN.value -> Intent(this, ServerTrojanActivity::class.java)
+             EConfigType.WIREGUARD.value -> Intent(this, ServerWireguardActivity::class.java)
+             EConfigType.HYSTERIA2.value -> Intent(this, ServerHysteria2Activity::class.java)
++            EConfigType.MIST.value -> Intent(this, ServerMistActivity::class.java)
+             else -> Intent(this, ServerHttpActivity::class.java).apply {
+                 putExtra("createConfigType", createConfigType)
+             }
+@@ -257,6 +259,7 @@ class MainActivity : HelperBaseComponentActivity() {
+             EConfigType.TROJAN -> ServerTrojanActivity::class.java
+             EConfigType.WIREGUARD -> ServerWireguardActivity::class.java
+             EConfigType.HYSTERIA2 -> ServerHysteria2Activity::class.java
++            EConfigType.MIST -> ServerMistActivity::class.java
+             else -> ServerHttpActivity::class.java
+         }
+         val intent = Intent(this, activityClass).apply {
+diff --git a/V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainImportMenu.kt b/V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainImportMenu.kt
+index db17de2..a645015 100644
+--- a/V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainImportMenu.kt
++++ b/V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainImportMenu.kt
+@@ -23,7 +23,8 @@ private enum class ImportMenuAction(@StringRes val labelRes: Int, val action: Ma
+     Http(R.string.menu_item_import_config_manually_http, MainAction.ImportManually(EConfigType.HTTP.value)),
+     Trojan(R.string.menu_item_import_config_manually_trojan, MainAction.ImportManually(EConfigType.TROJAN.value)),
+     WireGuard(R.string.menu_item_import_config_manually_wireguard, MainAction.ImportManually(EConfigType.WIREGUARD.value)),
+-    Hysteria2(R.string.menu_item_import_config_manually_hysteria2, MainAction.ImportManually(EConfigType.HYSTERIA2.value))
++    Hysteria2(R.string.menu_item_import_config_manually_hysteria2, MainAction.ImportManually(EConfigType.HYSTERIA2.value)),
++    Mist(R.string.menu_item_import_config_manually_mist, MainAction.ImportManually(EConfigType.MIST.value))
+ }
+ 
+ enum class MainMoreMenuAction(@StringRes val labelRes: Int) {
+diff --git a/V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/BaseServerActivity.kt b/V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/BaseServerActivity.kt
+index b93181d..b102f3e 100644
+--- a/V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/BaseServerActivity.kt
++++ b/V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/BaseServerActivity.kt
+@@ -247,6 +247,25 @@ abstract class BaseServerActivity : BaseComponentActivity() {
+         }
+     }
+ 
++    @Composable
++    protected fun MistTransportFields(
++        state: ServerUiState
++    ) {
++        if (state.network != NetworkType.MIST.type) return
++        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
++            FormTextField(
++                label = stringResource(R.string.server_lab_mist_client_id),
++                value = state.mistClientId,
++                onValueChange = { state.mistClientId = it }
++            )
++            FormTextField(
++                label = stringResource(R.string.server_lab_mist_auth_key),
++                value = state.mistAuthKey,
++                onValueChange = { state.mistAuthKey = it }
++            )
++        }
++    }
++
+     @Composable
+     protected fun CommonStreamSecurityFields(
+         state: ServerUiState,
+diff --git a/V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/ServerUiState.kt b/V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/ServerUiState.kt
+index eb9bf1c..6e86d65 100644
+--- a/V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/ServerUiState.kt
++++ b/V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/ServerUiState.kt
+@@ -35,6 +35,8 @@ class ServerUiState(
+     obfsPassword: String = "",
+     portHopping: String = "",
+     portHoppingInterval: String = "",
++    mistClientId: String = "",
++    mistAuthKey: String = "",
+     bandwidthDown: String = "",
+     bandwidthUp: String = "",
+     network: String = NetworkType.TCP.type,
+@@ -84,6 +86,8 @@ class ServerUiState(
+     var obfsPassword by mutableStateOf(obfsPassword)
+     var portHopping by mutableStateOf(portHopping)
+     var portHoppingInterval by mutableStateOf(portHoppingInterval)
++    var mistClientId by mutableStateOf(mistClientId)
++    var mistAuthKey by mutableStateOf(mistAuthKey)
+     var bandwidthDown by mutableStateOf(bandwidthDown)
+     var bandwidthUp by mutableStateOf(bandwidthUp)
+     var network by mutableStateOf(network)
+@@ -126,6 +130,8 @@ class ServerUiState(
+         val isSocksOrHttp = configType == EConfigType.SOCKS || configType == EConfigType.HTTP
+         val isWireguard = configType == EConfigType.WIREGUARD
+         val isHysteria2 = configType == EConfigType.HYSTERIA2
++        val isMist = configType == EConfigType.MIST
++        val isMistTransport = network == NetworkType.MIST.type
+ 
+         return initialConfig.copy(
+             configType = configType,
+@@ -154,9 +160,11 @@ class ServerUiState(
+             obfsPassword = if (isHysteria2) obfsPassword else null,
+             portHopping = if (isHysteria2) portHopping else null,
+             portHoppingInterval = if (isHysteria2) portHoppingInterval else null,
++            mistClientId = if (isMist || isMistTransport) mistClientId.nullIfBlank() else null,
++            mistAuthKey = if (isMist || isMistTransport) mistAuthKey.nullIfBlank() else null,
+             bandwidthDown = if (isHysteria2) bandwidthDown else null,
+             bandwidthUp = if (isHysteria2) bandwidthUp else null,
+-            network = network,
++            network = if (isMist) NetworkType.TCP.type else network,
+             headerType = headerType,
+             mode = mode.nullIfBlank(),
+             xhttpMode = xhttpMode.nullIfBlank(),
+@@ -212,6 +220,8 @@ class ServerUiState(
+                 obfsPassword = initialConfig.obfsPassword ?: "",
+                 portHopping = initialConfig.portHopping ?: "",
+                 portHoppingInterval = initialConfig.portHoppingInterval ?: "",
++                mistClientId = initialConfig.mistClientId ?: "",
++                mistAuthKey = initialConfig.mistAuthKey ?: "",
+                 bandwidthDown = initialConfig.bandwidthDown ?: "",
+                 bandwidthUp = initialConfig.bandwidthUp ?: "",
+                 network = initialConfig.network ?: NetworkType.TCP.type,
+diff --git a/V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/ServerVlessActivity.kt b/V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/ServerVlessActivity.kt
+index 8099d28..4b6a0e4 100644
+--- a/V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/ServerVlessActivity.kt
++++ b/V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/ServerVlessActivity.kt
+@@ -8,6 +8,7 @@ import androidx.compose.ui.res.stringResource
+ import com.v2ray.ang.R
+ import com.v2ray.ang.dto.entities.ProfileItem
+ import com.v2ray.ang.enums.EConfigType
++import com.v2ray.ang.enums.NetworkType
+ import com.v2ray.ang.ui.compose.FormDropdownField
+ import com.v2ray.ang.ui.compose.FormTextField
+ 
+@@ -35,6 +36,7 @@ class ServerVlessActivity : BaseServerActivity() {
+             CommonBasicFields(uiState)
+             VlessProtocolFields(uiState, flowOptions)
+             CommonNetworkFields(uiState, options)
++            MistTransportFields(uiState)
+             CommonStreamSecurityFields(
+                 state = uiState,
+                 options = options,
+@@ -48,6 +50,11 @@ class ServerVlessActivity : BaseServerActivity() {
+         if (config.password.isNullOrBlank()) {
+             return false
+         }
++        if (config.network == NetworkType.MIST.type) {
++            if (config.mistClientId.isNullOrBlank() || config.mistAuthKey.isNullOrBlank()) {
++                return false
++            }
++        }
+         return true
+     }
+ 
+diff --git a/V2rayNG/app/src/main/res/values-ar/strings.xml b/V2rayNG/app/src/main/res/values-ar/strings.xml
+index fd4a195..c17c1e3 100644
+--- a/V2rayNG/app/src/main/res/values-ar/strings.xml
++++ b/V2rayNG/app/src/main/res/values-ar/strings.xml
+@@ -44,6 +44,7 @@
+     <string name="menu_item_import_config_manually_http">إضافة [HTTP]</string>
+     <string name="menu_item_import_config_manually_trojan">إضافة [Trojan]</string>
+     <string name="menu_item_import_config_manually_wireguard">إضافة [WireGuard]</string>
++    <string name="menu_item_import_config_manually_mist">Add [Mist]</string>
+     <string name="menu_item_import_config_manually_hysteria2">إضافة [Hysteria2]</string>
+     <string name="confirm_delete_visible_profiles">هل أنت متأكد من أنك تريد حذف جميع ملفات التعريف المعروضة حاليًا؟</string>
+     <string name="confirm_delete_duplicate_profiles">هل أنت متأكد من أنك تريد حذف جميع ملفات التعريف المكررة المعروضة حاليًا؟</string>
+@@ -89,6 +90,8 @@
+     <string name="server_lab_address3">العنوان</string>
+     <string name="server_lab_port3">المنفذ</string>
+     <string name="server_lab_id3">كلمة المرور</string>
++    <string name="server_lab_mist_client_id">Client ID</string>
++    <string name="server_lab_mist_auth_key">Auth Key</string>
+     <string name="server_lab_security3">الأمان</string>
+     <string name="server_lab_id4">كلمة المرور (اختياري)</string>
+     <string name="server_lab_security4">المستخدم (اختياري)</string>
+diff --git a/V2rayNG/app/src/main/res/values-az/strings.xml b/V2rayNG/app/src/main/res/values-az/strings.xml
+index d486d49..798495c 100644
+--- a/V2rayNG/app/src/main/res/values-az/strings.xml
++++ b/V2rayNG/app/src/main/res/values-az/strings.xml
+@@ -44,6 +44,7 @@
+     <string name="menu_item_import_config_manually_http">[HTTP] əlavə et</string>
+     <string name="menu_item_import_config_manually_trojan">[Trojan] əlavə et</string>
+     <string name="menu_item_import_config_manually_wireguard">[WireGuard] əlavə et</string>
++    <string name="menu_item_import_config_manually_mist">Add [Mist]</string>
+     <string name="menu_item_import_config_manually_hysteria2">[Hysteria2] əlavə et</string>
+     <string name="confirm_delete_visible_profiles">Hazırda göstərilən bütün profilləri silmək istədiyinizə əminsiniz?</string>
+     <string name="confirm_delete_duplicate_profiles">Hazırda göstərilən bütün təkrar profilləri silmək istədiyinizə əminsiniz?</string>
+@@ -89,6 +90,8 @@
+     <string name="server_lab_address3">ünvan</string>
+     <string name="server_lab_port3">port</string>
+     <string name="server_lab_id3">şifrə</string>
++    <string name="server_lab_mist_client_id">Client ID</string>
++    <string name="server_lab_mist_auth_key">Auth Key</string>
+     <string name="server_lab_security3">təhlükəsizlik</string>
+     <string name="server_lab_id4">Şifrə (istəyə bağlı)</string>
+     <string name="server_lab_security4">İstifadəçi (istəyə bağlı)</string>
+diff --git a/V2rayNG/app/src/main/res/values-bn/strings.xml b/V2rayNG/app/src/main/res/values-bn/strings.xml
+index 0188b07..a8296f4 100644
+--- a/V2rayNG/app/src/main/res/values-bn/strings.xml
++++ b/V2rayNG/app/src/main/res/values-bn/strings.xml
+@@ -44,6 +44,7 @@
+     <string name="menu_item_import_config_manually_http">[HTTP] যোগ করুন</string>
+     <string name="menu_item_import_config_manually_trojan">[Trojan] যোগ করুন</string>
+     <string name="menu_item_import_config_manually_wireguard">[WireGuard] যোগ করুন</string>
++    <string name="menu_item_import_config_manually_mist">Add [Mist]</string>
+     <string name="menu_item_import_config_manually_hysteria2">[Hysteria2] যোগ করুন</string>
+     <string name="confirm_delete_visible_profiles">আপনি কি বর্তমানে প্রদর্শিত সব প্রোফাইল মুছে ফেলতে চান?</string>
+     <string name="confirm_delete_duplicate_profiles">আপনি কি বর্তমানে প্রদর্শিত সব সদৃশ প্রোফাইল মুছে ফেলতে চান?</string>
+@@ -89,6 +90,8 @@
+     <string name="server_lab_address3">ঠিকানা</string>
+     <string name="server_lab_port3">পোর্ট</string>
+     <string name="server_lab_id3">পাসওয়ার্ড</string>
++    <string name="server_lab_mist_client_id">Client ID</string>
++    <string name="server_lab_mist_auth_key">Auth Key</string>
+     <string name="server_lab_security3">নিরাপত্তা</string>
+     <string name="server_lab_id4">পাসওয়ার্ড (ঐচ্ছিক)</string>
+     <string name="server_lab_security4">ব্যবহারকারী (ঐচ্ছিক)</string>
+diff --git a/V2rayNG/app/src/main/res/values-bqi-rIR/strings.xml b/V2rayNG/app/src/main/res/values-bqi-rIR/strings.xml
+index 1a499d4..f411372 100644
+--- a/V2rayNG/app/src/main/res/values-bqi-rIR/strings.xml
++++ b/V2rayNG/app/src/main/res/values-bqi-rIR/strings.xml
+@@ -44,6 +44,7 @@
+     <string name="menu_item_import_config_manually_http">ٱووردن [HTTP]</string>
+     <string name="menu_item_import_config_manually_trojan">ٱووردن [Trojan]</string>
+     <string name="menu_item_import_config_manually_wireguard">ٱووردن [WireGuard]</string>
++    <string name="menu_item_import_config_manually_mist">Add [Mist]</string>
+     <string name="menu_item_import_config_manually_hysteria2">ٱووردن [Hysteria2]</string>
+     <string name="confirm_delete_visible_profiles">پوی کانفیگا ک هیم سکو نشووݩ داڌه ابۊن پاک ابۊن، هنی هم اخۊی پاکسووݩ کۊنی؟</string>
+     <string name="confirm_delete_duplicate_profiles">پوی کانفیگا تکراری ک هیم سکو نشووݩ داڌه ابۊن پاک ابۊن، هنی هم اخۊی پاکسووݩ کۊنی؟</string>
+@@ -89,6 +90,8 @@
+     <string name="server_lab_address3">نشۊوی</string>
+     <string name="server_lab_port3">پورت</string>
+     <string name="server_lab_id3">رزم</string>
++    <string name="server_lab_mist_client_id">Client ID</string>
++    <string name="server_lab_mist_auth_key">Auth Key</string>
+     <string name="server_lab_security3">ٱمنیت</string>
+     <string name="server_lab_id4">رزم (اختیاری)</string>
+     <string name="server_lab_security4">نوم منتوری (اختیاری)</string>
+diff --git a/V2rayNG/app/src/main/res/values-fa/strings.xml b/V2rayNG/app/src/main/res/values-fa/strings.xml
+index 46058f7..bbb0f15 100644
+--- a/V2rayNG/app/src/main/res/values-fa/strings.xml
++++ b/V2rayNG/app/src/main/res/values-fa/strings.xml
+@@ -44,6 +44,7 @@
+     <string name="menu_item_import_config_manually_http">افزودن [HTTP]</string>
+     <string name="menu_item_import_config_manually_trojan">افزودن [Trojan]</string>
+     <string name="menu_item_import_config_manually_wireguard">افزودن [WireGuard]</string>
++    <string name="menu_item_import_config_manually_mist">Add [Mist]</string>
+     <string name="menu_item_import_config_manually_hysteria2">افزودن [Hysteria2]</string>
+     <string name="confirm_delete_visible_profiles">آیا مطمئن هستید که می‌خواهید همه پروفایل‌های نمایش‌داده‌شده را حذف کنید؟</string>
+     <string name="confirm_delete_duplicate_profiles">آیا مطمئن هستید که می‌خواهید همه پروفایل‌های تکراری نمایش‌داده‌شده را حذف کنید؟</string>
+@@ -89,6 +90,8 @@
+     <string name="server_lab_address3">نشانی</string>
+     <string name="server_lab_port3">پورت</string>
+     <string name="server_lab_id3">رمز عبور</string>
++    <string name="server_lab_mist_client_id">Client ID</string>
++    <string name="server_lab_mist_auth_key">Auth Key</string>
+     <string name="server_lab_security3">امنیت</string>
+     <string name="server_lab_id4">رمز عبور (اختیاری)</string>
+     <string name="server_lab_security4">نام‌ کاربری (اختیاری)</string>
+diff --git a/V2rayNG/app/src/main/res/values-ru/strings.xml b/V2rayNG/app/src/main/res/values-ru/strings.xml
+index 0efb8cf..ebd8f21 100644
+--- a/V2rayNG/app/src/main/res/values-ru/strings.xml
++++ b/V2rayNG/app/src/main/res/values-ru/strings.xml
+@@ -44,6 +44,7 @@
+     <string name="menu_item_import_config_manually_http">Добавить HTTP</string>
+     <string name="menu_item_import_config_manually_trojan">Добавить Trojan</string>
+     <string name="menu_item_import_config_manually_wireguard">Добавить WireGuard</string>
++    <string name="menu_item_import_config_manually_mist">Add [Mist]</string>
+     <string name="menu_item_import_config_manually_hysteria2">Добавить Hysteria2</string>
+     <string name="confirm_delete_visible_profiles">Удалить все отображаемые профили?</string>
+     <string name="confirm_delete_duplicate_profiles">Удалить все отображаемые дубликаты профилей?</string>
+@@ -89,6 +90,8 @@
+     <string name="server_lab_address3">Адрес</string>
+     <string name="server_lab_port3">Порт</string>
+     <string name="server_lab_id3">Пароль</string>
++    <string name="server_lab_mist_client_id">Client ID</string>
++    <string name="server_lab_mist_auth_key">Auth Key</string>
+     <string name="server_lab_security3">Безопасность</string>
+     <string name="server_lab_id4">Пароль (необязательно)</string>
+     <string name="server_lab_security4">Пользователь (необязательно)</string>
+diff --git a/V2rayNG/app/src/main/res/values-vi/strings.xml b/V2rayNG/app/src/main/res/values-vi/strings.xml
+index 82b5d6b..66d8a2f 100644
+--- a/V2rayNG/app/src/main/res/values-vi/strings.xml
++++ b/V2rayNG/app/src/main/res/values-vi/strings.xml
+@@ -44,6 +44,7 @@
+     <string name="menu_item_import_config_manually_http">Thêm [HTTP]</string>
+     <string name="menu_item_import_config_manually_trojan">Thêm [Trojan]</string>
+     <string name="menu_item_import_config_manually_wireguard">Thêm [WireGuard]</string>
++    <string name="menu_item_import_config_manually_mist">Add [Mist]</string>
+     <string name="menu_item_import_config_manually_hysteria2">Thêm [Hysteria2]</string>
+     <string name="confirm_delete_visible_profiles">Bạn có chắc muốn xóa tất cả cấu hình đang hiển thị không?</string>
+     <string name="confirm_delete_duplicate_profiles">Bạn có chắc muốn xóa tất cả cấu hình trùng lặp đang hiển thị không?</string>
+@@ -89,6 +90,8 @@
+     <string name="server_lab_address3">Địa chỉ</string>
+     <string name="server_lab_port3">Cổng</string>
+     <string name="server_lab_id3">Mật khẩu</string>
++    <string name="server_lab_mist_client_id">Client ID</string>
++    <string name="server_lab_mist_auth_key">Auth Key</string>
+     <string name="server_lab_security3">Thuật toán mã hóa</string>
+     <string name="server_lab_id4">Mật khẩu (Không bắt buộc)</string>
+     <string name="server_lab_security4">Tên người dùng (Không bắt buộc)</string>
+diff --git a/V2rayNG/app/src/main/res/values-zh-rCN/strings.xml b/V2rayNG/app/src/main/res/values-zh-rCN/strings.xml
+index 6526117..ba7b4d7 100644
+--- a/V2rayNG/app/src/main/res/values-zh-rCN/strings.xml
++++ b/V2rayNG/app/src/main/res/values-zh-rCN/strings.xml
+@@ -44,6 +44,7 @@
+     <string name="menu_item_import_config_manually_http">添加 [HTTP]</string>
+     <string name="menu_item_import_config_manually_trojan">添加 [Trojan]</string>
+     <string name="menu_item_import_config_manually_wireguard">添加 [WireGuard]</string>
++    <string name="menu_item_import_config_manually_mist">添加 [Mist]</string>
+     <string name="menu_item_import_config_manually_hysteria2">添加 [Hysteria2]</string>
+     <string name="confirm_delete_visible_profiles">确定要删除当前显示的所有配置吗？</string>
+     <string name="confirm_delete_duplicate_profiles">确定要删除当前显示的所有重复配置吗？</string>
+@@ -89,6 +90,8 @@
+     <string name="server_lab_address3">服务器地址</string>
+     <string name="server_lab_port3">服务器端口</string>
+     <string name="server_lab_id3">密码</string>
++    <string name="server_lab_mist_client_id">客户端 ID</string>
++    <string name="server_lab_mist_auth_key">认证密钥</string>
+     <string name="server_lab_security3">加密方式</string>
+     <string name="server_lab_id4">密码 (可选)</string>
+     <string name="server_lab_security4">用户名 (可选)</string>
+diff --git a/V2rayNG/app/src/main/res/values-zh-rTW/strings.xml b/V2rayNG/app/src/main/res/values-zh-rTW/strings.xml
+index 9133cc2..bb442b7 100644
+--- a/V2rayNG/app/src/main/res/values-zh-rTW/strings.xml
++++ b/V2rayNG/app/src/main/res/values-zh-rTW/strings.xml
+@@ -44,6 +44,7 @@
+     <string name="menu_item_import_config_manually_http">新增 [HTTP]</string>
+     <string name="menu_item_import_config_manually_trojan">新增 [Trojan]</string>
+     <string name="menu_item_import_config_manually_wireguard">新增 [WireGuard]</string>
++    <string name="menu_item_import_config_manually_mist">添加 [Mist]</string>
+     <string name="menu_item_import_config_manually_hysteria2">新增 [Hysteria2]</string>
+     <string name="confirm_delete_visible_profiles">確定要刪除目前顯示的所有設定檔嗎？</string>
+     <string name="confirm_delete_duplicate_profiles">確定要刪除目前顯示的所有重複設定檔嗎？</string>
+@@ -89,6 +90,8 @@
+     <string name="server_lab_address3">伺服器位址</string>
+     <string name="server_lab_port3">伺服器埠</string>
+     <string name="server_lab_id3">密碼</string>
++    <string name="server_lab_mist_client_id">客戶端 ID</string>
++    <string name="server_lab_mist_auth_key">認證密鑰</string>
+     <string name="server_lab_security3">加密方式</string>
+     <string name="server_lab_id4">密碼 (可選)</string>
+     <string name="server_lab_security4">使用者名稱 (可選)</string>
+diff --git a/V2rayNG/app/src/main/res/values/arrays.xml b/V2rayNG/app/src/main/res/values/arrays.xml
+index d7975b4..d4fda79 100644
+--- a/V2rayNG/app/src/main/res/values/arrays.xml
++++ b/V2rayNG/app/src/main/res/values/arrays.xml
+@@ -29,6 +29,7 @@
+         <item>xhttp</item>
+         <item>h2</item>
+         <item>grpc</item>
++        <item>mist</item>
+     </string-array>
+ 
+     <string-array name="header_type_tcp" translatable="false">
+diff --git a/V2rayNG/app/src/main/res/values/strings.xml b/V2rayNG/app/src/main/res/values/strings.xml
+index f917819..2ebe3b7 100644
+--- a/V2rayNG/app/src/main/res/values/strings.xml
++++ b/V2rayNG/app/src/main/res/values/strings.xml
+@@ -44,6 +44,7 @@
+     <string name="menu_item_import_config_manually_http">Add [HTTP]</string>
+     <string name="menu_item_import_config_manually_trojan">Add [Trojan]</string>
+     <string name="menu_item_import_config_manually_wireguard">Add [WireGuard]</string>
++    <string name="menu_item_import_config_manually_mist">Add [Mist]</string>
+     <string name="menu_item_import_config_manually_hysteria2">Add [Hysteria2]</string>
+     <string name="confirm_delete_visible_profiles">Are you sure you want to delete all profiles currently shown?</string>
+     <string name="confirm_delete_duplicate_profiles">Are you sure you want to delete all duplicate profiles currently shown?</string>
+@@ -89,6 +90,8 @@
+     <string name="server_lab_address3">address</string>
+     <string name="server_lab_port3">port</string>
+     <string name="server_lab_id3">password</string>
++    <string name="server_lab_mist_client_id">Client ID</string>
++    <string name="server_lab_mist_auth_key">Auth Key</string>
+     <string name="server_lab_security3">security</string>
+     <string name="server_lab_id4">Password (optional)</string>
+     <string name="server_lab_security4">User (optional)</string>
+diff --git a/V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/ServerMistActivity.kt b/V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/ServerMistActivity.kt
+new file mode 100644
+index 0000000..0c4228c
+--- /dev/null
++++ b/V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/ServerMistActivity.kt
+@@ -0,0 +1,90 @@
++package com.v2ray.ang.ui.server
++
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.saveable.rememberSaveable
++import androidx.compose.ui.res.stringResource
++import com.v2ray.ang.R
++import com.v2ray.ang.dto.entities.ProfileItem
++import com.v2ray.ang.enums.EConfigType
++import com.v2ray.ang.extension.toast
++import com.v2ray.ang.ui.compose.FormDropdownField
++import com.v2ray.ang.ui.compose.FormTextField
++import com.v2ray.ang.ui.compose.SettingsSwitchItem
++
++class ServerMistActivity : BaseServerActivity() {
++
++    override val serverConfigType: EConfigType = EConfigType.MIST
++
++    @Composable
++    override fun ScreenContent() {
++        val options = rememberFieldOptions()
++        val uiState = rememberSaveable(saver = ServerUiState.Saver) {
++            ServerUiState.from(
++                initialConfig = initialConfig
++            )
++        }.apply {
++            configType = EConfigType.MIST
++            if (fingerPrint.isEmpty()) fingerPrint = "chrome"
++            if (alpn.isEmpty()) alpn = "h2,http/1.1"
++        }
++
++        ServerEditorScaffold(
++            title = serverConfigType.toString(),
++            onSaveClick = { saveServer(uiState) }
++        ) {
++            CommonBasicFields(uiState)
++            MistProtocolFields(uiState, options)
++        }
++    }
++
++    override fun validateProtocolConfig(config: ProfileItem): Boolean {
++        if (config.mistClientId.isNullOrBlank()) {
++            toast(R.string.server_lab_mist_client_id)
++            return false
++        }
++        if (config.mistAuthKey.isNullOrBlank()) {
++            toast(R.string.server_lab_mist_auth_key)
++            return false
++        }
++        return true
++    }
++
++    @Composable
++    private fun MistProtocolFields(
++        state: ServerUiState,
++        options: BaseServerActivity.FieldOptions
++    ) {
++        FormTextField(
++            label = stringResource(R.string.server_lab_mist_client_id),
++            value = state.mistClientId,
++            onValueChange = { state.mistClientId = it }
++        )
++        FormTextField(
++            label = stringResource(R.string.server_lab_mist_auth_key),
++            value = state.mistAuthKey,
++            onValueChange = { state.mistAuthKey = it }
++        )
++        FormTextField(
++            label = stringResource(R.string.server_lab_sni),
++            value = state.sni,
++            onValueChange = { state.sni = it }
++        )
++        FormDropdownField(
++            label = stringResource(R.string.server_lab_stream_fingerprint),
++            value = state.fingerPrint,
++            options = options.uTlsOptions,
++            onValueChange = { state.fingerPrint = it }
++        )
++        FormDropdownField(
++            label = stringResource(R.string.server_lab_stream_alpn),
++            value = state.alpn,
++            options = options.alpnOptions,
++            onValueChange = { state.alpn = it }
++        )
++        SettingsSwitchItem(
++            title = stringResource(R.string.server_lab_allow_insecure),
++            checked = state.allowInsecure,
++            onCheckedChange = { state.allowInsecure = it }
++        )
++    }
++}
