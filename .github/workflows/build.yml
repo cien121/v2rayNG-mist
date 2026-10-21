@@ -34,6 +34,13 @@ jobs:
           xargs sed -i 's|<string name="app_name" translatable="false">v2rayNG</string>|<string name="app_name" translatable="false">v2rayNG-Mist</string>|'
         grep -n 'applicationId =\|ndkVersion' V2rayNG/app/build.gradle.kts | head -4
 
+    - name: Apply Mist UI patch
+      run: |
+        cd src
+        git apply ${{ github.workspace }}/.github/patches/mist-ui.patch
+        echo "Mist UI patch applied successfully"
+        git status --short | head -20
+
     - name: Setup Android SDK
       uses: android-actions/setup-android@v4
       with:
