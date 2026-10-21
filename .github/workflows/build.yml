@@ -73,7 +73,7 @@ jobs:
       run: |
         mkdir -p src/V2rayNG/app/libs
         curl -fSL -o src/V2rayNG/app/libs/libv2ray.aar \
-          https://github.com/cien121/xray-core/releases/download/mist-v0.1-fixed/libv2ray.aar
+          https://github.com/cien121/xray-core/releases/download/mist-v0.2-clean/libv2ray.aar
         ls -lh src/V2rayNG/app/libs/libv2ray.aar
 
     - name: Setup Java
