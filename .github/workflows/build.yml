@@ -1,0 +1,84 @@
+name: Build Mist APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Clone v2rayNG upstream
+      run: |
+        git clone --depth 1 https://github.com/2dust/v2rayNG.git src
+        cd src
+        git submodule update --init hev-socks5-tunnel
+
+    - name: Apply Mist patches
+      run: |
+        cd src
+        python3 - <<'PYEOF'
+        # Change applicationId to avoid conflict with official v2rayNG
+        # Keep namespace as com.v2ray.ang for R class / JNI compatibility
+        with open('V2rayNG/app/build.gradle.kts') as f:
+            c = f.read()
+        c = c.replace('applicationId = "com.v2ray.ang"', 'applicationId = "com.chan.v2rayng.mist"')
+        c = c.replace('    namespace = "com.v2ray.ang"',
+                      '    namespace = "com.v2ray.ang"\n    ndkVersion = "30.0.16248370"')
+        with open('V2rayNG/app/build.gradle.kts', 'w') as f:
+            f.write(c)
+        print("build.gradle.kts patched")
+        PYEOF
+        # Rename app in all locales (non-translatable string duplicated per locale)
+        grep -rl '<string name="app_name" translatable="false">v2rayNG</string>' V2rayNG/app/src/main/res/ | \
+          xargs sed -i 's|<string name="app_name" translatable="false">v2rayNG</string>|<string name="app_name" translatable="false">v2rayNG-Mist</string>|'
+        grep -n 'applicationId =\|ndkVersion' V2rayNG/app/build.gradle.kts | head -4
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v4
+      with:
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '14742923'
+        packages: 'platforms;android-37 build-tools;37.0.0 platform-tools'
+
+    - name: Install NDK
+      run: |
+        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+          --install "ndk;30.0.16248370"
+        echo "NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> $GITHUB_ENV
+
+    - name: Build libhevtun
+      run: |
+        cd src
+        bash compile-hevtun.sh
+
+    - name: Copy libhevtun
+      run: |
+        cp -r src/libs src/V2rayNG/app/
+
+    - name: Download Mist libv2ray AAR
+      run: |
+        mkdir -p src/V2rayNG/app/libs
+        curl -fSL -o src/V2rayNG/app/libs/libv2ray.aar \
+          https://github.com/cien121/xray-core/releases/download/mist-v0.1/libv2ray.aar
+        ls -lh src/V2rayNG/app/libs/libv2ray.aar
+
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+
+    - name: Build Debug APK
+      run: |
+        cd src/V2rayNG
+        echo "sdk.dir=${ANDROID_HOME}" > local.properties
+        chmod +x gradlew
+        ./gradlew :app:assemblePlaystoreDebug --stacktrace
+
+    - name: Upload arm64-v8a APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: v2rayng-mist-arm64
+        path: src/V2rayNG/app/build/outputs/apk/playstore/debug/*arm64-v8a*.apk
+        if-no-files-found: error
